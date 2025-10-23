@@ -249,24 +249,6 @@ func sendCommandToDaemon(command string) (*Response, error) {
 	return &response, nil
 }
 
-func getTime() {
-	response, err := sendCommandToDaemon("get")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(response.Status.RestOfTimeStr)
-}
-
-func getPeriod() {
-	response, err := sendCommandToDaemon("get")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(response.Status.Period)
-}
-
 func getFormatted() {
 	response, err := sendCommandToDaemon("get")
 	if err != nil {
@@ -314,7 +296,7 @@ func formatDuration(d time.Duration) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s daemon | time | period | formatted | toggle\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s daemon | get | toggle\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -327,11 +309,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
 			os.Exit(1)
 		}
-	case "time":
-		getTime()
-	case "period":
-		getPeriod()
-	case "formatted":
+	case "get":
 		getFormatted()
 	case "toggle":
 		toggleTimer()
