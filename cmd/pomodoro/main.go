@@ -314,7 +314,7 @@ func formatDuration(d time.Duration) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s daemon | time | period | formatted | switch\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s daemon | time | period | formatted | toggle\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -333,7 +333,7 @@ func main() {
 		getPeriod()
 	case "formatted":
 		getFormatted()
-	case "switch":
+	case "toggle":
 		toggleTimer()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
