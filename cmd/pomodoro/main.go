@@ -15,14 +15,13 @@ const (
 	socketPath = "/tmp/pomodoro.sock"
 )
 
-// Period represents the current Pomodoro period type.
 type Period int
 
 const (
 	Unknown Period = iota
 	Work
 	Rest
-	Stopped // Добавлен новый тип периода для остановленного состояния
+	Stopped
 )
 
 const (
@@ -30,20 +29,17 @@ const (
 	restDuration  = 5 * time.Minute
 )
 
-// Status holds the current state of the Pomodoro timer.
 type Status struct {
 	Period        string        `json:"period"`
 	RestOfTime    time.Duration `json:"rest_of_time"`
 	RestOfTimeStr string        `json:"rest_of_time_str"`
 }
 
-// Response is the JSON response sent by the daemon.
 type Response struct {
 	Status *Status `json:"status,omitempty"`
 	Error  string  `json:"error,omitempty"`
 }
 
-// PomodoroDaemon manages the timer state and Unix socket server.
 type PomodoroDaemon struct {
 	currentPeriod       Period
 	currentRestOfTime   time.Duration
@@ -51,7 +47,6 @@ type PomodoroDaemon struct {
 	mu                  sync.RWMutex
 }
 
-// NewPomodoroDaemon initializes a new daemon instance.
 func NewPomodoroDaemon() *PomodoroDaemon {
 	return &PomodoroDaemon{
 		currentPeriod: Work,
@@ -63,7 +58,6 @@ func NewPomodoroDaemon() *PomodoroDaemon {
 	}
 }
 
-// Start begins the timer logic and the Unix socket server.
 func (p *PomodoroDaemon) Start() error {
 	if err := p.removeExistingSocket(); err != nil {
 		return fmt.Errorf("failed to remove existing socket: %w", err)
@@ -75,16 +69,16 @@ func (p *PomodoroDaemon) Start() error {
 	}
 	defer listener.Close()
 
-	// Start the internal timer loop
+	p.currentPeriod = Stopped
+	p.currentRestOfTime = 0
+
 	go p.runTimer()
 
 	fmt.Printf("Daemon started, socket: %s\n", socketPath)
 
-	// Accept connections
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			// Log error and continue accepting other connections
 			continue
 		}
 
@@ -118,12 +112,12 @@ func (p *PomodoroDaemon) switchTimer() {
 	p.currentPeriod = p.getReversedPeriod(p.currentPeriod)
 	p.currentRestOfTime = p.initialPeriodDurations[p.currentPeriod]
 
-	args := []string{"-t", "5000", "-a", "Pomodoro Timer"} // 5000ms = 5s, -a для указания приложения
+	args := []string{"-t", "5000", "-a", "Pomodoro Timer"}
 
 	if p.currentPeriod == Work {
 		title = "Pomodoro: Work Time!"
 		message = "Time to focus! Start your work session."
-	} else { // p.currentPeriod == Rest
+	} else {
 		title = "Pomodoro: Break Time!"
 		message = "Take a break and relax."
 	}
@@ -140,7 +134,7 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
-		return // Connection likely closed by client
+		return
 	}
 
 	command := strings.TrimSpace(string(buf[:n]))
@@ -152,7 +146,7 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 		response.Status = &status
 	case "switch":
 		p.toggleTimer()
-		status := p.getStatus() // Get status after toggle
+		status := p.getStatus()
 		response.Status = &status
 	default:
 		response.Error = "Unknown command"
@@ -160,23 +154,20 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 
 	jsonData, err := json.Marshal(response)
 	if err != nil {
-		// Log error, but no point sending error back after failure to marshal
 		return
 	}
 
 	conn.Write(jsonData)
 }
 
-// getStatus safely retrieves the current status.
 func (p *PomodoroDaemon) getStatus() Status {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Возвращаем статус в зависимости от состояния
 	if p.currentPeriod == Stopped {
 		return Status{
 			Period:        "Stopped",
-			RestOfTime:    0, // Время остановлено на 0
+			RestOfTime:    0,
 			RestOfTimeStr: "00:00",
 		}
 	}
@@ -188,7 +179,6 @@ func (p *PomodoroDaemon) getStatus() Status {
 	}
 }
 
-// resetTimer safely resets the timer to the initial Work state.
 func (p *PomodoroDaemon) resetTimer() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -197,17 +187,14 @@ func (p *PomodoroDaemon) resetTimer() {
 	p.currentRestOfTime = workDuration
 }
 
-// toggleTimer safely toggles the timer between running and stopped states.
 func (p *PomodoroDaemon) toggleTimer() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if p.currentPeriod == Stopped {
-		// Если таймер остановлен, переключаемся обратно в рабочий режим
 		p.currentPeriod = Work
 		p.currentRestOfTime = workDuration
 	} else {
-		// Если таймер запущен, останавливаем его
 		p.currentPeriod = Stopped
 		p.currentRestOfTime = 0
 	}
@@ -233,7 +220,6 @@ func (p *PomodoroDaemon) periodToString(period Period) string {
 	}
 }
 
-// sendCommandToDaemon connects to the daemon socket and sends a command.
 func sendCommandToDaemon(command string) (*Response, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -303,14 +289,13 @@ func getFormatted() {
 	fmt.Printf("%s %s\n", emoji, response.Status.RestOfTimeStr)
 }
 
-// toggleTimer sends a switch command to the daemon.
 func toggleTimer() {
 	response, err := sendCommandToDaemon("switch")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// Print the status after toggle
+
 	fmt.Printf("Timer toggled. Status: %s %s\n", response.Status.Period, response.Status.RestOfTimeStr)
 }
 
@@ -329,7 +314,7 @@ func formatDuration(d time.Duration) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s -daemon | -time | -period | -formatted | -switch\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s daemon | time | period | formatted | switch\n", os.Args[0])
 		os.Exit(1)
 	}
 
