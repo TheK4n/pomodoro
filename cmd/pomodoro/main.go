@@ -1,3 +1,4 @@
+// Pomodoro enter point.
 package main
 
 import (
@@ -5,10 +6,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
-	"os/exec"
 )
 
 const (
@@ -25,8 +26,8 @@ const (
 )
 
 const (
-	workDuration  = 25 * time.Minute
-	restDuration  = 5 * time.Minute
+	workDuration = 25 * time.Minute
+	restDuration = 5 * time.Minute
 )
 
 type Status struct {
@@ -41,15 +42,15 @@ type Response struct {
 }
 
 type PomodoroDaemon struct {
-	currentPeriod       Period
-	currentRestOfTime   time.Duration
+	currentPeriod          Period
+	currentRestOfTime      time.Duration
 	initialPeriodDurations map[Period]time.Duration
-	mu                  sync.RWMutex
+	mu                     sync.RWMutex
 }
 
 func NewPomodoroDaemon() *PomodoroDaemon {
 	return &PomodoroDaemon{
-		currentPeriod: Work,
+		currentPeriod:     Work,
 		currentRestOfTime: workDuration,
 		initialPeriodDurations: map[Period]time.Duration{
 			Work: workDuration,
@@ -97,11 +98,13 @@ func (p *PomodoroDaemon) runTimer() {
 
 	for range ticker.C {
 		p.mu.Lock()
+
 		if p.currentPeriod != Stopped && p.currentRestOfTime <= 1*time.Second {
 			p.switchTimer()
 		} else if p.currentPeriod != Stopped {
 			p.currentRestOfTime -= 1 * time.Second
 		}
+
 		p.mu.Unlock()
 	}
 }
@@ -132,12 +135,14 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
+
 	n, err := conn.Read(buf)
 	if err != nil {
 		return
 	}
 
 	command := strings.TrimSpace(string(buf[:n]))
+
 	var response Response
 
 	switch command {
@@ -157,7 +162,10 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 		return
 	}
 
-	conn.Write(jsonData)
+	_, err = conn.Write(jsonData)
+	if err != nil {
+		return
+	}
 }
 
 func (p *PomodoroDaemon) getStatus() Status {
@@ -179,14 +187,6 @@ func (p *PomodoroDaemon) getStatus() Status {
 	}
 }
 
-func (p *PomodoroDaemon) resetTimer() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.currentPeriod = Work
-	p.currentRestOfTime = workDuration
-}
-
 func (p *PomodoroDaemon) toggleTimer() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -204,6 +204,7 @@ func (p *PomodoroDaemon) getReversedPeriod(current Period) Period {
 	if current == Work {
 		return Rest
 	}
+
 	return Work
 }
 
@@ -232,6 +233,7 @@ func sendCommandToDaemon(command string) (*Response, error) {
 	}
 
 	buf := make([]byte, 1024)
+
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, fmt.Errorf("error reading response: %w", err)
@@ -257,6 +259,7 @@ func getFormatted() {
 	}
 
 	var emoji string
+
 	switch response.Status.Period {
 	case "Work":
 		emoji = "🍅"
@@ -291,6 +294,7 @@ func formatDuration(d time.Duration) string {
 	if hours > 0 {
 		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 	}
+
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 

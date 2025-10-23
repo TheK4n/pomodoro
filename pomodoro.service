@@ -1,0 +1,12 @@
+[Unit]
+Description=Pomodoro daemon
+Requires=default.target
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pomodoro daemon
+Restart=always
+
+[Install]
+WantedBy=default.target

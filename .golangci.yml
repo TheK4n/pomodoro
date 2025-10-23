@@ -1,0 +1,93 @@
+version: "2"
+run:
+  tests: false
+  issues-exit-code: 1
+  allow-parallel-runners: true
+  allow-serial-runners: true
+  build-tags:
+    - integration
+    - unit
+    - e2e
+
+linters:
+  enable:
+    - bodyclose
+    - dogsled
+    - dupl
+    - errcheck
+    - exhaustive
+    # - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - ineffassign
+    - misspell
+    - mnd
+    - nakedret
+    - nestif
+    - nilerr
+    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - tparallel
+    - unconvert
+    - unparam
+    - whitespace
+    - wrapcheck
+    - wsl_v5
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+
+linters-settings:
+  sloglint:
+    no-mixed-args: false
+    kv-only: true
+    attr-only: true
+    context-only: true
+    static-msg: true
+    no-raw-keys: true
+    key-naming-case: snake
+    args-on-sep-lines: true
+  errcheck:
+    check-type-assertions: true
+  goconst:
+    min-len: 2
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+  govet:
+    check-shadowing: true
+    enable:
+      - fieldalignment
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+  gosec:
+    includes: []
+  staticcheck:
+    checks: ["*"]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
