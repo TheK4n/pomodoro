@@ -7,14 +7,33 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"time"
+
+	flags "github.com/jessevdk/go-flags"
 )
 
-const (
-	socketPath = "/tmp/pomodoro.sock"
-)
+
+type options struct {
+	SocketPath  string `long:"socket-path" default:"" env:"SOCKET_PATH" description:"Path to socket"`
+	WorkMinutes int    `long:"work" short:"w" default:"25" description:"Time period for work in minutes"`
+	RestMinutes int    `long:"rest" short:"r" default:"5" description:"Time period for rest in minutes"`
+}
+
+func (opts *options) SetDefaultSocketPathIfNotProvided() {
+	if opts.SocketPath != "" {
+		return
+	}
+
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		opts.SocketPath = path.Join(runtimeDir, "pomodoro.sock")
+		return
+	}
+
+	opts.SocketPath = "/tmp/pomodoro.sock"
+}
 
 type Period int
 
@@ -23,11 +42,6 @@ const (
 	Work
 	Rest
 	Stopped
-)
-
-const (
-	workDuration = 25 * time.Minute
-	restDuration = 5 * time.Minute
 )
 
 type Status struct {
@@ -42,14 +56,16 @@ type Response struct {
 }
 
 type PomodoroDaemon struct {
+	mu                     sync.RWMutex
+	socketPath             string
 	currentPeriod          Period
 	currentRestOfTime      time.Duration
 	initialPeriodDurations map[Period]time.Duration
-	mu                     sync.RWMutex
 }
 
-func NewPomodoroDaemon() *PomodoroDaemon {
+func NewPomodoroDaemon(socketPath string, workDuration, restDuration time.Duration) *PomodoroDaemon {
 	return &PomodoroDaemon{
+		socketPath:		socketPath,
 		currentPeriod:     Work,
 		currentRestOfTime: workDuration,
 		initialPeriodDurations: map[Period]time.Duration{
@@ -64,7 +80,7 @@ func (p *PomodoroDaemon) Start() error {
 		return fmt.Errorf("failed to remove existing socket: %w", err)
 	}
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := net.Listen("unix", p.socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to create socket: %w", err)
 	}
@@ -75,7 +91,7 @@ func (p *PomodoroDaemon) Start() error {
 
 	go p.runTimer()
 
-	fmt.Printf("Daemon started, socket: %s\n", socketPath)
+	fmt.Printf("Daemon started, socket: %s\n", p.socketPath)
 
 	for {
 		conn, err := listener.Accept()
@@ -88,7 +104,7 @@ func (p *PomodoroDaemon) Start() error {
 }
 
 func (p *PomodoroDaemon) removeExistingSocket() error {
-	_ = os.Remove(socketPath)
+	_ = os.Remove(p.socketPath)
 	return nil
 }
 
@@ -193,7 +209,7 @@ func (p *PomodoroDaemon) toggleTimer() {
 
 	if p.currentPeriod == Stopped {
 		p.currentPeriod = Work
-		p.currentRestOfTime = workDuration
+		p.currentRestOfTime = p.initialPeriodDurations[Work]
 	} else {
 		p.currentPeriod = Stopped
 		p.currentRestOfTime = 0
@@ -221,7 +237,7 @@ func (p *PomodoroDaemon) periodToString(period Period) string {
 	}
 }
 
-func sendCommandToDaemon(command string) (*Response, error) {
+func sendCommandToDaemon(command string, socketPath string) (*Response, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to daemon: %w", err)
@@ -251,8 +267,8 @@ func sendCommandToDaemon(command string) (*Response, error) {
 	return &response, nil
 }
 
-func getFormatted() {
-	response, err := sendCommandToDaemon("get")
+func getFormatted(socketPath string) {
+	response, err := sendCommandToDaemon("get", socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -274,8 +290,8 @@ func getFormatted() {
 	fmt.Printf("%s %s\n", emoji, response.Status.RestOfTimeStr)
 }
 
-func toggleTimer() {
-	response, err := sendCommandToDaemon("switch")
+func toggleTimer(socketPath string) {
+	response, err := sendCommandToDaemon("switch", socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -299,24 +315,39 @@ func formatDuration(d time.Duration) string {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s daemon | get | toggle\n", os.Args[0])
+	var opts options
+
+	args, err := flags.NewParser(&opts, flags.Default).ParseArgs(os.Args)
+	if err != nil {
+		fmt.Printf("parse params error: %s\n", err)
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
+	opts.SetDefaultSocketPathIfNotProvided()
+
+
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s daemon | get | toggle\n", args[0])
+		os.Exit(1)
+	}
+
+	command := args[1]
 
 	switch command {
 	case "daemon":
-		daemon := NewPomodoroDaemon()
+		daemon := NewPomodoroDaemon(
+			opts.SocketPath,
+			time.Duration(opts.WorkMinutes) * time.Minute,
+			time.Duration(opts.RestMinutes) * time.Minute,
+		)
 		if err := daemon.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
 			os.Exit(1)
 		}
 	case "get":
-		getFormatted()
+		getFormatted(opts.SocketPath)
 	case "toggle":
-		toggleTimer()
+		toggleTimer(opts.SocketPath)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		os.Exit(1)
