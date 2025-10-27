@@ -15,7 +15,6 @@ import (
 	flags "github.com/jessevdk/go-flags"
 )
 
-
 type options struct {
 	SocketPath  string `long:"socket-path" default:"" env:"SOCKET_PATH" description:"Path to socket"`
 	WorkMinutes int    `long:"work" short:"w" default:"25" description:"Time period for work in minutes"`
@@ -44,6 +43,10 @@ const (
 	Stopped
 )
 
+const (
+	OneKebibyte = 1024
+)
+
 type Status struct {
 	Period        string        `json:"period"`
 	RestOfTime    time.Duration `json:"rest_of_time"`
@@ -65,7 +68,7 @@ type PomodoroDaemon struct {
 
 func NewPomodoroDaemon(socketPath string, workDuration, restDuration time.Duration) *PomodoroDaemon {
 	return &PomodoroDaemon{
-		socketPath:		socketPath,
+		socketPath:        socketPath,
 		currentPeriod:     Work,
 		currentRestOfTime: workDuration,
 		initialPeriodDurations: map[Period]time.Duration{
@@ -77,14 +80,17 @@ func NewPomodoroDaemon(socketPath string, workDuration, restDuration time.Durati
 
 func (p *PomodoroDaemon) Start() error {
 	if err := p.removeExistingSocket(); err != nil {
-		return fmt.Errorf("failed to remove existing socket: %w", err)
+		fmt.Fprintf(os.Stderr, "failed to remove existing socket: %e", err)
 	}
 
 	listener, err := net.Listen("unix", p.socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to create socket: %w", err)
 	}
-	defer listener.Close()
+
+	defer func() {
+		_ = listener.Close()
+	}()
 
 	p.currentPeriod = Stopped
 	p.currentRestOfTime = 0
@@ -104,7 +110,10 @@ func (p *PomodoroDaemon) Start() error {
 }
 
 func (p *PomodoroDaemon) removeExistingSocket() error {
-	_ = os.Remove(p.socketPath)
+	if err := os.Remove(p.socketPath); err != nil {
+		return fmt.Errorf("fail to remove socket: %w", err)
+	}
+
 	return nil
 }
 
@@ -126,10 +135,14 @@ func (p *PomodoroDaemon) runTimer() {
 }
 
 func (p *PomodoroDaemon) switchTimer() {
-	var title, message string
-
 	p.currentPeriod = p.getReversedPeriod(p.currentPeriod)
 	p.currentRestOfTime = p.initialPeriodDurations[p.currentPeriod]
+
+	_ = p.notifySend()
+}
+
+func (p *PomodoroDaemon) notifySend() error {
+	var title, message string
 
 	args := []string{"-t", "5000", "-a", "Pomodoro Timer"}
 
@@ -144,13 +157,20 @@ func (p *PomodoroDaemon) switchTimer() {
 	args = append(args, title, message)
 
 	cmd := exec.Command("notify-send", args...)
-	_ = cmd.Run()
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("fail to notify: %w", err)
+	}
+
+	return nil
 }
 
 func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, OneKebibyte)
 
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -159,6 +179,18 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 
 	command := strings.TrimSpace(string(buf[:n]))
 
+	jsonData, err := p.dispatchCommand(command)
+	if err != nil {
+		return
+	}
+
+	_, err = conn.Write(jsonData)
+	if err != nil {
+		return
+	}
+}
+
+func (p *PomodoroDaemon) dispatchCommand(command string) ([]byte, error) {
 	var response Response
 
 	switch command {
@@ -175,13 +207,10 @@ func (p *PomodoroDaemon) handleConnection(conn net.Conn) {
 
 	jsonData, err := json.Marshal(response)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("fail to marshal response: %w", err)
 	}
 
-	_, err = conn.Write(jsonData)
-	if err != nil {
-		return
-	}
+	return jsonData, nil
 }
 
 func (p *PomodoroDaemon) getStatus() Status {
@@ -232,6 +261,8 @@ func (p *PomodoroDaemon) periodToString(period Period) string {
 		return "Rest"
 	case Stopped:
 		return "Stopped"
+	case Unknown:
+		return "Unknown"
 	default:
 		return "Unknown"
 	}
@@ -242,13 +273,16 @@ func sendCommandToDaemon(command string, socketPath string) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to daemon: %w", err)
 	}
-	defer conn.Close()
+
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	if _, err := conn.Write([]byte(command)); err != nil {
 		return nil, fmt.Errorf("error sending command: %w", err)
 	}
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, OneKebibyte)
 
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -301,11 +335,14 @@ func toggleTimer(socketPath string) {
 }
 
 func formatDuration(d time.Duration) string {
+	secondsInHour := 3600
+	secondsInMinute := 60
+
 	seconds := int(d.Seconds())
-	hours := seconds / 3600
-	seconds %= 3600
-	minutes := seconds / 60
-	seconds %= 60
+	hours := seconds / secondsInHour
+	seconds %= secondsInHour
+	minutes := seconds / secondsInMinute
+	seconds %= secondsInMinute
 
 	if hours > 0 {
 		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
@@ -325,8 +362,8 @@ func main() {
 
 	opts.SetDefaultSocketPathIfNotProvided()
 
-
-	if len(args) < 2 {
+	commandProvidedArgsLen := 2
+	if len(args) < commandProvidedArgsLen {
 		fmt.Fprintf(os.Stderr, "Usage: %s daemon | get | toggle\n", args[0])
 		os.Exit(1)
 	}
@@ -337,8 +374,8 @@ func main() {
 	case "daemon":
 		daemon := NewPomodoroDaemon(
 			opts.SocketPath,
-			time.Duration(opts.WorkMinutes) * time.Minute,
-			time.Duration(opts.RestMinutes) * time.Minute,
+			time.Duration(opts.WorkMinutes)*time.Minute,
+			time.Duration(opts.RestMinutes)*time.Minute,
 		)
 		if err := daemon.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
