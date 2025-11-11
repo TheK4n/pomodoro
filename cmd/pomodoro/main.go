@@ -15,7 +15,6 @@ import (
 	flags "github.com/jessevdk/go-flags"
 )
 
-
 type options struct {
 	SocketPath  string `long:"socket-path" default:"" env:"SOCKET_PATH" description:"Path to socket"`
 	WorkMinutes int    `long:"work" short:"w" default:"25" description:"Time period for work in minutes"`
@@ -27,12 +26,21 @@ func (opts *options) SetDefaultSocketPathIfNotProvided() {
 		return
 	}
 
-	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		opts.SocketPath = path.Join(runtimeDir, "pomodoro.sock")
-		return
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = "/run"
 	}
 
-	opts.SocketPath = "/tmp/pomodoro.sock"
+	display := os.Getenv("DISPLAY")
+	if display == "" {
+		display = os.Getenv("WAYLAND_DISPLAY")
+	}
+
+	if display == "" {
+		display = "0"
+	}
+
+	opts.SocketPath = path.Join(runtimeDir, fmt.Sprintf("pomodoro_%s.sock", display))
 }
 
 type Period int
@@ -65,7 +73,7 @@ type PomodoroDaemon struct {
 
 func NewPomodoroDaemon(socketPath string, workDuration, restDuration time.Duration) *PomodoroDaemon {
 	return &PomodoroDaemon{
-		socketPath:		socketPath,
+		socketPath:		   socketPath,
 		currentPeriod:     Work,
 		currentRestOfTime: workDuration,
 		initialPeriodDurations: map[Period]time.Duration{
@@ -76,14 +84,15 @@ func NewPomodoroDaemon(socketPath string, workDuration, restDuration time.Durati
 }
 
 func (p *PomodoroDaemon) Start() error {
-	if err := p.removeExistingSocket(); err != nil {
-		return fmt.Errorf("failed to remove existing socket: %w", err)
+	if _, err := os.Stat(p.socketPath); err == nil {
+		return fmt.Errorf("socket %s already exists", p.socketPath)
 	}
 
 	listener, err := net.Listen("unix", p.socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to create socket: %w", err)
 	}
+	defer p.removeExistingSocket()
 	defer listener.Close()
 
 	p.currentPeriod = Stopped
@@ -103,9 +112,8 @@ func (p *PomodoroDaemon) Start() error {
 	}
 }
 
-func (p *PomodoroDaemon) removeExistingSocket() error {
+func (p *PomodoroDaemon) removeExistingSocket() {
 	_ = os.Remove(p.socketPath)
-	return nil
 }
 
 func (p *PomodoroDaemon) runTimer() {
@@ -324,7 +332,6 @@ func main() {
 	}
 
 	opts.SetDefaultSocketPathIfNotProvided()
-
 
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s daemon | get | toggle\n", args[0])
